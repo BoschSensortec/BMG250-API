@@ -482,7 +482,7 @@ int8_t bmg250_set_if_mode(uint8_t if_mode, uint8_t spi_en, const struct bmg250_d
  * @return Result of API execution status
  * @retval zero -> Success / -ve value -> Error
  */
-int8_t bmg250_get_temperature(uint32_t *temperature, const struct bmg250_dev *dev);
+int8_t bmg250_get_temperature(int32_t *temperature, const struct bmg250_dev *dev);
 
 /*************************** C++ guard macro *****************************/
 #ifdef __cplusplus

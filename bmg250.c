@@ -1086,11 +1086,11 @@ int8_t bmg250_set_if_mode(uint8_t if_mode, uint8_t spi_en, const struct bmg250_d
 /*!
  *  @brief This API is used to get the temperature data from the sensor
  */
-int8_t bmg250_get_temperature(uint32_t *temperature, const struct bmg250_dev *dev)
+int8_t bmg250_get_temperature(int32_t *temperature, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
 	uint8_t data[2];
-	uint16_t temp_data;
+	int16_t temp_data;
 
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
@@ -1098,7 +1098,7 @@ int8_t bmg250_get_temperature(uint32_t *temperature, const struct bmg250_dev *de
 		/* Read the temperature data registers */
 		rslt = bmg250_get_regs(BMG250_TEMPERATURE_ADDR, data, 2, dev);
 		if (rslt == BMG250_OK) {
-			temp_data = ((uint16_t)data[1] << 8) | data[0];
+			temp_data = (int16_t)(((uint16_t)data[1] << 8) | data[0]);
 			/* Conversion of LSB to degree celcius(x1000) */
 			*temperature = (temp_data * 1000 / 512) + 23000;
 		}
