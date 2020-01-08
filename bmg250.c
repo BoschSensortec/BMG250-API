@@ -40,13 +40,13 @@
  * patent rights of the copyright holder.
  *
  * @file    bmg250.c
- * @date    Jun 21 2017
- * @version 1.0.0
+ * @date    Oct 22 2018
+ * @version 1.1.0
  * @brief   Sensor driver for BMG250 sensor
  *
  */
 
- /*!
+/*!
  * @defgroup bmg250
  * @brief
  * @{*/
@@ -146,6 +146,7 @@ static int8_t enable_fifo_wm_int(const struct bmg250_int_settg *int_config, cons
  * @retval zero -> Success  / -ve value -> Error
  */
 static int8_t enable_fifo_full_int(const struct bmg250_int_settg *int_config, const struct bmg250_dev *dev);
+
 /*!
  * @brief This internal API enables the data ready interrupt.
  *
@@ -248,6 +249,7 @@ static void reset_fifo_data_structure(const struct bmg250_dev *dev);
  * @retval zero -> Success / -ve value -> Error
  */
 static int8_t get_fifo_byte_counter(uint16_t *bytes_to_read, const struct bmg250_dev *dev);
+
 /*!
  *  @brief This internal API computes the number of bytes of gyro FIFO data
  *  which is to be parsed in header-less mode
@@ -257,8 +259,11 @@ static int8_t get_fifo_byte_counter(uint16_t *bytes_to_read, const struct bmg250
  *  @param[in] gyro_frame_count  : Number of Gyro data frames to be read
  *  @param[in] dev               : Structure instance of bmg250_dev.
  */
-static void get_gyro_len_to_parse(uint16_t *data_index, uint16_t *data_read_length, const uint8_t *gyro_frame_count,
-					const struct bmg250_dev *dev);
+static void get_gyro_len_to_parse(uint16_t *data_index,
+	uint16_t *data_read_length,
+	const uint8_t *gyro_frame_count,
+	const struct bmg250_dev *dev);
+
 /*!
  *  @brief This internal API checks the presence of non-valid frames in the read fifo data.
  *
@@ -283,9 +288,12 @@ static void check_frame_validity(uint16_t *data_index, const struct bmg250_dev *
  *                                frame header data in header mode
  *  @param[in] dev		: structure instance of bmg250_dev.
  */
+static void unpack_gyro_frame(struct bmg250_sensor_data *gyro,
+	uint16_t *idx,
+	uint8_t *gyro_idx,
+	uint8_t frame_info,
+	const struct bmg250_dev *dev);
 
-static void unpack_gyro_frame(struct bmg250_sensor_data *gyro, uint16_t *idx, uint8_t *gyro_idx, uint8_t frame_info,
-				const struct bmg250_dev *dev);
 /*!
  *  @brief This internal API is used to parse the gyro data from the
  *  FIFO data and store it in the instance of the structure bmg250_sensor_data.
@@ -294,9 +302,10 @@ static void unpack_gyro_frame(struct bmg250_sensor_data *gyro, uint16_t *idx, ui
  *  @param[in,out] data_start_index  : Index value of number of bytes parsed
  *  @param[in] dev		     : structure instance of bmg250_dev.
  */
+static void unpack_gyro_data(struct bmg250_sensor_data *gyro_data,
+	uint16_t data_start_index,
+	const struct bmg250_dev *dev);
 
-static void unpack_gyro_data(struct bmg250_sensor_data *gyro_data, uint16_t data_start_index,
-				const struct bmg250_dev *dev);
 /*!
  *  @brief This internal API is used to parse the gyro data from the
  *  FIFO data in header mode.
@@ -305,9 +314,10 @@ static void unpack_gyro_data(struct bmg250_sensor_data *gyro_data, uint16_t data
  *  @param[in,out] gyro_length   : Number of gyro frames
  *  @param[in] dev               : Structure instance of bmg250_dev.
  */
+static void extract_gyro_header_mode(struct bmg250_sensor_data *gyro_data,
+	uint8_t *gyro_length,
+	const struct bmg250_dev *dev);
 
-static void extract_gyro_header_mode(struct bmg250_sensor_data *gyro_data, uint8_t *gyro_length,
-					const struct bmg250_dev *dev);
 /*!
  *  @brief This internal API is used to parse and store the sensor time from the
  *  FIFO data in the structure instance dev->fifo->sensor_time.
@@ -375,6 +385,7 @@ static int8_t set_gyro_offset(const struct bmg250_offset *offset, const struct b
  * @retval zero -> Success / -ve value -> Error
  */
 static int8_t set_spi_enable(const struct bmg250_dev *dev);
+
 /*********************************************************************/
 /* User function definitions  */
 
@@ -391,8 +402,7 @@ int8_t bmg250_init(struct bmg250_dev *dev)
 
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
-
-	if ((rslt == BMG250_OK) && (dev->interface == BMG250_SPI_INTF)) {
+	if ((rslt == BMG250_OK) && (dev->intf == BMG250_SPI_INTF)) {
 		/* Dummy read of 0x7F register to enable SPI Interface
 		   if SPI is used */
 		rslt = bmg250_get_regs(BMG250_SPI_COMM_TEST_ADDR, &data, 1, dev);
@@ -418,16 +428,18 @@ int8_t bmg250_init(struct bmg250_dev *dev)
 int8_t bmg250_get_regs(uint8_t reg_addr, uint8_t *data, uint16_t len, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
+
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
-
 	if ((rslt == BMG250_OK) && (data != NULL)) {
-		if (dev->interface == BMG250_SPI_INTF) {
+		if (dev->intf == BMG250_SPI_INTF) {
 			/* Configuring reg_addr for SPI Interface */
 			reg_addr = (reg_addr | BMG250_SPI_RD_MASK);
 		}
+
 		/* Perform the read operation */
 		rslt = dev->read(dev->dev_id, reg_addr, data, len);
+
 		/* Delay for proper data read */
 		dev->delay_ms(1);
 		if (rslt != BMG250_OK) {
@@ -448,30 +460,33 @@ int8_t bmg250_set_regs(uint8_t reg_addr, uint8_t *data, uint16_t len, const stru
 {
 	int8_t rslt;
 	uint16_t count = 0;
+
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
+
 	/* Check for null pointer in the device structure*/
 	if ((rslt == BMG250_OK) && (data != NULL)) {
-		if (dev->interface == BMG250_SPI_INTF) {
+		if (dev->intf == BMG250_SPI_INTF) {
 			/* Configuring reg_addr for SPI Interface */
 			reg_addr = (reg_addr & BMG250_SPI_WR_MASK);
 		}
+
 		/* Burst write is allowed only in normal mode */
 		if (dev->power_mode == BMG250_GYRO_NORMAL_MODE) {
 			rslt = dev->write(dev->dev_id, reg_addr, data, len);
 			dev->delay_ms(1);
 		} else {
 			/* Burst write is not allowed in
-			suspend & fast-startup mode */
+			   suspend & fast-startup mode */
 			for (; count < len; count++) {
 				rslt = dev->write(dev->dev_id, reg_addr, &data[count], 1);
 				reg_addr++;
+
 				/* Interface Idle time delay
-				for proper write operation */
+				   for proper write operation */
 				dev->delay_ms(1);
 			}
 		}
-
 		if (rslt != BMG250_OK) {
 			/* Failure case */
 			rslt = BMG250_E_COM_FAIL;
@@ -498,9 +513,9 @@ int8_t bmg250_soft_reset(const struct bmg250_dev *dev)
 		/* Reset the device */
 		rslt = bmg250_set_regs(BMG250_COMMAND_REG_ADDR, &data, 1, dev);
 		dev->delay_ms(BMG250_SOFT_RESET_DELAY_MS);
-		if ((rslt == BMG250_OK) && (dev->interface == BMG250_SPI_INTF)) {
+		if ((rslt == BMG250_OK) && (dev->intf == BMG250_SPI_INTF)) {
 			/* Dummy read of 0x7F register to enable SPI Interface
-			if SPI is used */
+			   if SPI is used */
 			rslt = bmg250_get_regs(BMG250_SPI_COMM_TEST_ADDR, &data, 1, dev);
 		}
 	}
@@ -520,9 +535,8 @@ int8_t bmg250_set_power_mode(const struct bmg250_dev *dev)
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
 	if (rslt == BMG250_OK) {
-		if ((dev->power_mode == BMG250_GYRO_SUSPEND_MODE) ||
-			(dev->power_mode == BMG250_GYRO_NORMAL_MODE)
-			|| (dev->power_mode == BMG250_GYRO_FASTSTARTUP_MODE)) {
+		if ((dev->power_mode == BMG250_GYRO_SUSPEND_MODE) || (dev->power_mode == BMG250_GYRO_NORMAL_MODE) ||
+			(dev->power_mode == BMG250_GYRO_FASTSTARTUP_MODE)) {
 			/* Read the existing PMU status & store it */
 			rslt = bmg250_get_regs(BMG250_PMU_STATUS_ADDR, &gyro_pmu_status, 1, dev);
 			if (rslt == BMG250_OK) {
@@ -550,7 +564,7 @@ int8_t bmg250_set_power_mode(const struct bmg250_dev *dev)
 int8_t bmg250_set_sensor_settings(const struct bmg250_cfg *gyro_cfg, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
-	uint8_t data[2] = {0};
+	uint8_t data[2] = { 0 };
 
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
@@ -560,10 +574,13 @@ int8_t bmg250_set_sensor_settings(const struct bmg250_cfg *gyro_cfg, const struc
 		if (rslt == BMG250_OK) {
 			/* Setting output data rate */
 			data[0] = BMG250_SET_BITS_POS_0(data[0], BMG250_GYRO_ODR, gyro_cfg->odr);
+
 			/* Setting bandwidth */
 			data[0] = BMG250_SET_BITS(data[0], BMG250_GYRO_BW, gyro_cfg->bw);
+
 			/* Setting range */
 			data[1] = BMG250_SET_BITS_POS_0(data[1], BMG250_GYRO_RANGE, gyro_cfg->range);
+
 			/* Set gyro output data rate and bandwidth */
 			rslt = bmg250_set_regs(BMG250_GYRO_CONFIG_ADDR, data, 2, dev);
 			if (rslt == BMG250_OK) {
@@ -583,13 +600,14 @@ int8_t bmg250_set_sensor_settings(const struct bmg250_cfg *gyro_cfg, const struc
 int8_t bmg250_get_sensor_settings(struct bmg250_cfg *gyro_cfg, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
-	uint8_t data[2] = {0};
+	uint8_t data[2] = { 0 };
 
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
 	if (rslt == BMG250_OK) {
 		/* read gyro output data rate and bandwidth */
 		rslt = bmg250_get_regs(BMG250_GYRO_CONFIG_ADDR, data, 2, dev);
+
 		/* Extract the BW, ODR, Range */
 		gyro_cfg->bw = BMG250_GET_BITS(data[0], BMG250_GYRO_BW);
 		gyro_cfg->odr = BMG250_GET_BITS_POS_0(data[0], BMG250_GYRO_ODR);
@@ -607,7 +625,7 @@ int8_t bmg250_get_sensor_data(uint8_t data_sel, struct bmg250_sensor_data *gyro,
 {
 	int8_t rslt;
 	uint8_t idx = 0;
-	uint8_t data_array[9] = {0};
+	uint8_t data_array[9] = { 0 };
 	uint32_t time_0 = 0;
 	uint32_t time_1 = 0;
 	uint32_t time_2 = 0;
@@ -623,38 +641,40 @@ int8_t bmg250_get_sensor_data(uint8_t data_sel, struct bmg250_sensor_data *gyro,
 			if (rslt == BMG250_OK) {
 				lsb = data_array[idx++];
 				msb = data_array[idx++];
+
 				/* gyro X axis data */
 				gyro->x = (int16_t)(((uint16_t)msb << 8) | lsb);
-
 				lsb = data_array[idx++];
 				msb = data_array[idx++];
+
 				/* gyro Y axis data */
 				gyro->y = (int16_t)(((uint16_t)msb << 8) | lsb);
-
 				lsb = data_array[idx++];
 				msb = data_array[idx++];
+
 				/* gyro Z axis data */
 				gyro->z = (int16_t)(((uint16_t)msb << 8) | lsb);
 
 				/* update sensor-time data as 0 */
 				gyro->sensortime = 0;
 			}
-		} else if (data_sel == BMG250_DATA_TIME_SEL)  {
+		} else if (data_sel == BMG250_DATA_TIME_SEL) {
 			/* read gyro sensor data along with sensor-time */
 			rslt = bmg250_get_regs(BMG250_DATA_ADDR, data_array, 9, dev);
 			if (rslt == BMG250_OK) {
 				lsb = data_array[idx++];
 				msb = data_array[idx++];
+
 				/* gyro X axis data */
 				gyro->x = (int16_t)(((uint16_t)msb << 8) | lsb);
-
 				lsb = data_array[idx++];
 				msb = data_array[idx++];
+
 				/* gyro Y axis data */
 				gyro->y = (int16_t)(((uint16_t)msb << 8) | lsb);
-
 				lsb = data_array[idx++];
 				msb = data_array[idx++];
+
 				/* gyro Z axis data */
 				gyro->z = (int16_t)(((uint16_t)msb << 8) | lsb);
 
@@ -687,14 +707,17 @@ int8_t bmg250_set_int_config(const struct bmg250_int_settg *int_config, const st
 	if ((rslt == BMG250_OK) && (int_config != NULL)) {
 		switch (int_config->int_type) {
 		case BMG250_DATA_RDY_INT:
+
 			/* Data ready interrupt */
 			rslt = set_data_ready_int(int_config, dev);
 			break;
 		case BMG250_FIFO_FULL_INT:
+
 			/* FIFO full interrupt */
 			rslt = set_fifo_full_int(int_config, dev);
 			break;
 		case BMG250_FIFO_WATERMARK_INT:
+
 			/* FIFO water-mark interrupt */
 			rslt = set_fifo_watermark_int(int_config, dev);
 			break;
@@ -750,6 +773,7 @@ int8_t bmg250_set_fifo_config(uint8_t config, uint8_t enable, const struct bmg25
 					reg_data = reg_data & (~config);
 				}
 			}
+
 			/* Set the FIFO config in the sensor */
 			rslt = bmg250_set_regs(BMG250_FIFO_CONFIG1_ADDR, &reg_data, 1, dev);
 			if (rslt == BMG250_OK) {
@@ -758,8 +782,10 @@ int8_t bmg250_set_fifo_config(uint8_t config, uint8_t enable, const struct bmg25
 				if (rslt == BMG250_OK) {
 					/* Extract fifo header enabled status */
 					dev->fifo->fifo_header_enable = BMG250_GET_BITS(reg_data, BMG250_FIFO_HEADER_EN);
+
 					/* Extract fifo sensor time enabled status */
 					dev->fifo->fifo_time_enable = BMG250_GET_BITS(reg_data, BMG250_FIFO_TIME_EN);
+
 					/* Extract data enabled status */
 					dev->fifo->fifo_data_enable = BMG250_GET_BITS(reg_data, BMG250_FIFO_DATA_EN);
 				}
@@ -780,7 +806,7 @@ int8_t bmg250_set_fifo_config(uint8_t config, uint8_t enable, const struct bmg25
 int8_t bmg250_set_fifo_flush(const struct bmg250_dev *dev)
 {
 	int8_t rslt;
-	uint8_t data =  BMG250_FIFO_FLUSH_CMD;
+	uint8_t data = BMG250_FIFO_FLUSH_CMD;
 
 	/* Null-pointer check */
 	rslt = null_ptr_check(dev);
@@ -815,7 +841,6 @@ int8_t bmg250_set_fifo_down(uint8_t fifo_down, const struct bmg250_dev *dev)
 	}
 
 	return rslt;
-
 }
 
 /*!
@@ -836,19 +861,23 @@ int8_t bmg250_set_fifo_wm(uint8_t wm_frame_count, uint16_t *fifo_length, const s
 		} else {
 			fifo_wm = (wm_frame_count * BMG250_FIFO_G_LENGTH);
 		}
+
 		/* Handling out of range request in setting water-mark */
 		if (fifo_wm > 996) {
 			/* Setting Watrmark to 996 bytes */
 			fifo_wm = 996;
 		}
+
 		/* FIFO length must be returned to the user */
 		*fifo_length = fifo_wm;
+
 		/* The unit of FIFO watermark is in terms of 4 bytes */
 		wm_reg_val = (uint8_t)(fifo_wm / 4);
 		if ((fifo_wm % 4 != 0) && ((fifo_wm + 4) < 996)) {
 			/* Additional 4 bytes are added */
 			wm_reg_val = wm_reg_val + 1;
 		}
+
 		/* Set the FIFO watermark */
 		rslt = bmg250_set_regs(BMG250_FIFO_CONFIG0_ADDR, &wm_reg_val, 1, dev);
 	}
@@ -875,16 +904,14 @@ int8_t bmg250_get_fifo_data(const struct bmg250_dev *dev)
 			user_fifo_len = dev->fifo->length;
 			if (dev->fifo->length > bytes_to_read) {
 				/* Handling the case where user requests
-				more data than available in FIFO */
+				   more data than available in FIFO */
 				dev->fifo->length = bytes_to_read;
 			}
-			if ((dev->fifo->fifo_time_enable == BMG250_ENABLE) &&
-				(bytes_to_read + 4 <= user_fifo_len)) {
+			if ((dev->fifo->fifo_time_enable == BMG250_ENABLE) && (bytes_to_read + 4 <= user_fifo_len)) {
 				/* Handling case of sensor time availability */
 				dev->fifo->length = dev->fifo->length + 4;
 			}
-
-			if (dev->interface == BMG250_SPI_INTF) {
+			if (dev->intf == BMG250_SPI_INTF) {
 				/* SPI mask for reading FIFO */
 				addr = addr | BMG250_SPI_RD_MASK;
 			}
@@ -917,14 +944,16 @@ int8_t bmg250_extract_gyro(struct bmg250_sensor_data *gyro_data, uint8_t *data_l
 		if (dev->fifo->fifo_header_enable == 0) {
 			/* Number of bytes to be parsed from FIFO */
 			get_gyro_len_to_parse(&data_index, &data_read_length, data_length, dev);
-			for (; data_index < data_read_length ;) {
+			for (; data_index < data_read_length;) {
 				/*Check for the availability of next two bytes of FIFO data */
 				check_frame_validity(&data_index, dev);
 				fifo_data_enable = dev->fifo->fifo_data_enable;
 				unpack_gyro_frame(gyro_data, &data_index, &gyro_index, fifo_data_enable, dev);
 			}
+
 			/* update number of gyro data read */
 			*data_length = gyro_index;
+
 			/* update the gyro byte index */
 			dev->fifo->gyro_byte_start_idx = data_index;
 		} else {
@@ -936,6 +965,7 @@ int8_t bmg250_extract_gyro(struct bmg250_sensor_data *gyro_data, uint8_t *data_l
 
 	return rslt;
 }
+
 /*!
  *  @brief This API triggers the self test of the sensor and gives the self
  *  test result to the user as return value
@@ -992,14 +1022,15 @@ int8_t bmg250_set_i2c_wdt_settings(uint8_t wdt_en, uint8_t wdt_sel, const struct
 				/* Set required WDT period if WDT is enabled*/
 				reg_data = BMG250_SET_BITS(reg_data, BMG250_WDT_SEL, wdt_sel);
 			}
+
 			/* Set the WDT config in the sensor */
 			rslt = bmg250_set_regs(BMG250_NV_CONF_ADDR, &reg_data, 1, dev);
 		}
 	}
 
 	return rslt;
-
 }
+
 /*!
  *  @brief This API triggers the fast offset compensation (FOC) in the sensor
  */
@@ -1019,6 +1050,7 @@ int8_t bmg250_set_foc(const struct bmg250_dev *dev)
 			rslt = bmg250_set_regs(BMG250_COMMAND_REG_ADDR, &reg_data, 1, dev);
 			if (rslt == BMG250_OK) {
 				dev->delay_ms(BMG250_FOC_DELAY_MS);
+
 				/* Read the FOC status */
 				rslt = bmg250_get_regs(BMG250_STATUS_ADDR, &reg_data, 1, dev);
 				reg_data = BMG250_GET_BITS(reg_data, BMG250_FOC_READY);
@@ -1069,6 +1101,7 @@ int8_t bmg250_set_if_mode(uint8_t if_mode, uint8_t spi_en, const struct bmg250_d
 		rslt = bmg250_get_regs(BMG250_IF_CONF_ADDR, &reg_data, 1, dev);
 		if (rslt == BMG250_OK) {
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_IF_CONFIG, if_mode);
+
 			/* Set the IF_CONF in the sensor */
 			rslt = bmg250_set_regs(BMG250_IF_CONF_ADDR, &reg_data, 1, dev);
 			if (rslt == BMG250_OK) {
@@ -1086,7 +1119,7 @@ int8_t bmg250_set_if_mode(uint8_t if_mode, uint8_t spi_en, const struct bmg250_d
 /*!
  *  @brief This API is used to get the temperature data from the sensor
  */
-int8_t bmg250_get_temperature(uint32_t *temperature, const struct bmg250_dev *dev)
+int8_t bmg250_get_temperature(int32_t *temperature, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
 	uint8_t data[2];
@@ -1099,8 +1132,11 @@ int8_t bmg250_get_temperature(uint32_t *temperature, const struct bmg250_dev *de
 		rslt = bmg250_get_regs(BMG250_TEMPERATURE_ADDR, data, 2, dev);
 		if (rslt == BMG250_OK) {
 			temp_data = ((uint16_t)data[1] << 8) | data[0];
-			/* Conversion of LSB to degree celcius(x1000) */
-			*temperature = (temp_data * 1000 / 512) + 23000;
+			if (temp_data == 0x8000) {
+				rslt = BMG250_E_INVALID_TEMPERATURE;
+			} else {
+				*temperature = (((int16_t) temp_data * INT32_C(1000)) / INT32_C(512)) + INT32_C(23000);
+			}
 		}
 	}
 
@@ -1140,7 +1176,7 @@ static void power_mode_set_delay(const uint8_t *gyro_pmu_status, const struct bm
 		dev->delay_ms(BMG250_GYRO_DELAY_MS);
 	} else if (*gyro_pmu_status == BMG250_PMU_STATUS_FSU) {
 		/* This delay is required for transition from
-		fast-startup mode to normal mode */
+		   fast-startup mode to normal mode */
 		dev->delay_ms(BMG250_GYRO_FSU_DELAY_MS);
 	}
 }
@@ -1155,6 +1191,7 @@ static int8_t check_invalid_settg(const struct bmg250_dev *dev)
 
 	/* read the error reg */
 	rslt = bmg250_get_regs(BMG250_ERROR_REG_ADDR, &data, 1, dev);
+
 	/* ODR-BW invalid setting error is checked */
 	data = data >> 1;
 	data = data & BMG250_ERR_REG_MASK;
@@ -1195,6 +1232,7 @@ static int8_t set_data_ready_int(const struct bmg250_int_settg *int_config, cons
 static int8_t set_fifo_full_int(const struct bmg250_int_settg *int_config, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
+
 	/* Enable the fifo full interrupt */
 	rslt = enable_fifo_full_int(int_config, dev);
 	if (rslt == BMG250_OK) {
@@ -1243,6 +1281,7 @@ static int8_t enable_fifo_wm_int(const struct bmg250_int_settg *int_config, cons
 	rslt = bmg250_get_regs(BMG250_INT_EN_ADDR, &reg_data, 1, dev);
 	if (rslt == BMG250_OK) {
 		reg_data = BMG250_SET_BITS(reg_data, BMG250_FIFO_WM_EN, int_config->fifo_wtm_int_en);
+
 		/* Writing data to INT_ENABLE Address */
 		rslt = bmg250_set_regs(BMG250_INT_EN_ADDR, &reg_data, 1, dev);
 	}
@@ -1262,6 +1301,7 @@ static int8_t enable_fifo_full_int(const struct bmg250_int_settg *int_config, co
 	rslt = bmg250_get_regs(BMG250_INT_EN_ADDR, &reg_data, 1, dev);
 	if (rslt == BMG250_OK) {
 		reg_data = BMG250_SET_BITS(reg_data, BMG250_FIFO_FULL_EN, int_config->fifo_full_int_en);
+
 		/* Writing data to INT_ENABLE Address */
 		rslt = bmg250_set_regs(BMG250_INT_EN_ADDR, &reg_data, 1, dev);
 	}
@@ -1281,6 +1321,7 @@ static int8_t enable_data_ready(const struct bmg250_dev *dev)
 	rslt = bmg250_get_regs(BMG250_INT_EN_ADDR, &reg_data, 1, dev);
 	if (rslt == BMG250_OK) {
 		reg_data = BMG250_SET_BITS(reg_data, BMG250_DATA_READY_EN, BMG250_ENABLE);
+
 		/* Writing data to INT_ENABLE Address */
 		rslt = bmg250_set_regs(BMG250_INT_EN_ADDR, &reg_data, 1, dev);
 	}
@@ -1323,26 +1364,32 @@ static int8_t config_int_out_ctrl(const struct bmg250_int_settg *int_config, con
 		if (int_config->int_channel == BMG250_INT_CHANNEL_1) {
 			/* Output enable */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT1_EN, int_config->int_pin_settg.output_en);
+
 			/* Output mode */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT1_OD, int_config->int_pin_settg.output_mode);
+
 			/* Output type */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT1_LVL, int_config->int_pin_settg.output_type);
+
 			/* edge control */
 			reg_data = BMG250_SET_BITS_POS_0(reg_data, BMG250_INT1_EDGE, int_config->int_pin_settg.edge_ctrl);
 		} else if (int_config->int_channel == BMG250_INT_CHANNEL_2) {
 			/* Configuring channel 2 */
 			/* Output enable */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_EN, int_config->int_pin_settg.output_en);
+
 			/* Output mode */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_OD, int_config->int_pin_settg.output_mode);
+
 			/* Output type */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_LVL, int_config->int_pin_settg.output_type);
+
 			/* edge control */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_EDGE, int_config->int_pin_settg.edge_ctrl);
 		}
+
 		/* Set the configurations in the sensor */
 		rslt = bmg250_set_regs(BMG250_IN_OUT_CNTRL_ADDR, &reg_data, 1, dev);
-
 	}
 
 	return rslt;
@@ -1366,6 +1413,7 @@ static int8_t config_int_input(const struct bmg250_int_settg *int_config, const 
 			/* Configuring channel 2 Input enable */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_INPUT_EN, int_config->int_pin_settg.input_en);
 		}
+
 		/* Set the settings in the sensor */
 		rslt = bmg250_set_regs(BMG250_INT_IN_CTRL_ADDR, &reg_data, 1, dev);
 	}
@@ -1383,7 +1431,6 @@ static int8_t map_data_ready_int(const struct bmg250_int_settg *int_config, cons
 
 	/* Configure Map register to map interrupt pin to data ready interrupt*/
 	rslt = bmg250_get_regs(BMG250_INT_MAP_ADDR, &reg_data, 1, dev);
-
 	if (rslt == BMG250_OK) {
 		if (int_config->int_channel == BMG250_INT_CHANNEL_1) {
 			/* Mapping to INT 1 pin */
@@ -1392,6 +1439,7 @@ static int8_t map_data_ready_int(const struct bmg250_int_settg *int_config, cons
 			/* Mapping to INT 2 pin */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_DATA_READY, BMG250_ENABLE);
 		}
+
 		/* Configure Map register to map interrupt pin to data ready interrupt*/
 		rslt = bmg250_set_regs(BMG250_INT_MAP_ADDR, &reg_data, 1, dev);
 	}
@@ -1409,7 +1457,6 @@ static int8_t map_int_pin_to_fifo_full(const struct bmg250_int_settg *int_config
 
 	/* Configure Map register to map interrupt pin to FIFO-full interrupt*/
 	rslt = bmg250_get_regs(BMG250_INT_MAP_ADDR, &reg_data, 1, dev);
-
 	if (rslt == BMG250_OK) {
 		if (int_config->int_channel == BMG250_INT_CHANNEL_1) {
 			/* Mapping to INT 1 pin */
@@ -1418,6 +1465,7 @@ static int8_t map_int_pin_to_fifo_full(const struct bmg250_int_settg *int_config
 			/* Mapping to INT 2 pin */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_FIFO_FULL, BMG250_ENABLE);
 		}
+
 		/* Configure Map register to map interrupt pin to data ready interrupt*/
 		rslt = bmg250_set_regs(BMG250_INT_MAP_ADDR, &reg_data, 1, dev);
 	}
@@ -1435,7 +1483,6 @@ static int8_t map_int_pin_to_fifo_wtm(const struct bmg250_int_settg *int_config,
 
 	/* Configure Map register to map interrupt pin to FIFO watermark interrupt*/
 	rslt = bmg250_get_regs(BMG250_INT_MAP_ADDR, &reg_data, 1, dev);
-
 	if (rslt == BMG250_OK) {
 		if (int_config->int_channel == BMG250_INT_CHANNEL_1) {
 			/* Mapping to INT 1 pin */
@@ -1444,6 +1491,7 @@ static int8_t map_int_pin_to_fifo_wtm(const struct bmg250_int_settg *int_config,
 			/* Mapping to INT 2 pin */
 			reg_data = BMG250_SET_BITS(reg_data, BMG250_INT2_FIFO_WM, BMG250_ENABLE);
 		}
+
 		/* Configure Map register to map interrupt pin to FIFO watermark interrupt*/
 		rslt = bmg250_set_regs(BMG250_INT_MAP_ADDR, &reg_data, 1, dev);
 	}
@@ -1471,7 +1519,7 @@ static void reset_fifo_data_structure(const struct bmg250_dev *dev)
 static int8_t get_fifo_byte_counter(uint16_t *bytes_to_read, const struct bmg250_dev *dev)
 {
 	int8_t rslt;
-	uint8_t data[2] = {0};
+	uint8_t data[2] = { 0 };
 
 	rslt = bmg250_get_regs(BMG250_FIFO_LENGTH_ADDR, data, 2, dev);
 	data[1] = data[1] & BMG250_FIFO_BYTE_COUNTER_MASK;
@@ -1486,12 +1534,13 @@ static int8_t get_fifo_byte_counter(uint16_t *bytes_to_read, const struct bmg250
  *  @brief This API computes the number of bytes of gyro FIFO data
  *  which is to be parsed in header-less mode
  */
-static void get_gyro_len_to_parse(uint16_t *data_index, uint16_t *data_read_length, const uint8_t *gyro_frame_count,
-					const struct bmg250_dev *dev)
+static void get_gyro_len_to_parse(uint16_t *data_index,
+	uint16_t *data_read_length,
+	const uint8_t *gyro_frame_count,
+	const struct bmg250_dev *dev)
 {
 	/* Data start index */
 	*data_index = dev->fifo->gyro_byte_start_idx;
-
 	if (dev->fifo->fifo_data_enable == BMG250_ENABLE) {
 		*data_read_length = (*gyro_frame_count) * BMG250_FIFO_G_LENGTH;
 	} else {
@@ -1500,13 +1549,11 @@ static void get_gyro_len_to_parse(uint16_t *data_index, uint16_t *data_read_leng
 		 * so we update the data index as complete */
 		*data_index = dev->fifo->length;
 	}
-
 	if (*data_read_length > dev->fifo->length) {
 		/* Handling the case where more data is requested
 		 * than that is available*/
 		*data_read_length = dev->fifo->length;
 	}
-
 }
 
 /*!
@@ -1516,14 +1563,13 @@ static void check_frame_validity(uint16_t *data_index, const struct bmg250_dev *
 {
 	if ((*data_index + 2) < dev->fifo->length) {
 		/* Check if FIFO is empty */
-		if ((dev->fifo->data[*data_index] == FIFO_CONFIG_MSB_CHECK)
-			&& (dev->fifo->data[*data_index + 1] == FIFO_CONFIG_LSB_CHECK)) {
+		if ((dev->fifo->data[*data_index] == FIFO_CONFIG_MSB_CHECK) &&
+			(dev->fifo->data[*data_index + 1] == FIFO_CONFIG_LSB_CHECK)) {
 			/* Update the data index as complete */
 			*data_index = dev->fifo->length;
 		}
 	}
 }
-
 
 /*!
  *  @brief This API is used to parse the gyroscope's data from the
@@ -1531,38 +1577,42 @@ static void check_frame_validity(uint16_t *data_index, const struct bmg250_dev *
  *  It updates the idx value which is used to store the index of
  *  the current data byte which is parsed.
  */
-static void unpack_gyro_frame(struct bmg250_sensor_data *gyro, uint16_t *idx, uint8_t *gyro_idx, uint8_t frame_info,
-				const struct bmg250_dev *dev)
+static void unpack_gyro_frame(struct bmg250_sensor_data *gyro,
+	uint16_t *idx,
+	uint8_t *gyro_idx,
+	uint8_t frame_info,
+	const struct bmg250_dev *dev)
 {
 	switch (frame_info) {
-
 	case BMG250_FIFO_HEAD_G:
 	case BMG250_ENABLE:
+
 		/* Partial read, then skip the data */
 		if ((*idx + BMG250_FIFO_G_LENGTH) > dev->fifo->length) {
 			/* Update the data index as complete */
 			*idx = dev->fifo->length;
 			break;
 		}
+
 		/*Unpack the data array into structure instance "gyro"*/
 		unpack_gyro_data(&gyro[*gyro_idx], *idx, dev);
+
 		/*Move the data index*/
 		(*idx) = (*idx) + BMG250_FIFO_G_LENGTH;
 		(*gyro_idx)++;
 		break;
-
 	default:
 		break;
 	}
-
 }
 
 /*!
  *  @brief This API is used to parse the gyro data from the
  *  FIFO data and store it in the instance of the structure bmg250_sensor_data.
  */
-static void unpack_gyro_data(struct bmg250_sensor_data *gyro_data, uint16_t data_start_index,
-				const struct bmg250_dev *dev)
+static void unpack_gyro_data(struct bmg250_sensor_data *gyro_data,
+	uint16_t data_start_index,
+	const struct bmg250_dev *dev)
 {
 	uint16_t data_lsb;
 	uint16_t data_msb;
@@ -1587,8 +1637,9 @@ static void unpack_gyro_data(struct bmg250_sensor_data *gyro_data, uint16_t data
  *  @brief This API is used to parse the gyro data from the
  *  FIFO data in header mode.
  */
-static void extract_gyro_header_mode(struct bmg250_sensor_data *gyro_data, uint8_t *gyro_length,
-					const struct bmg250_dev *dev)
+static void extract_gyro_header_mode(struct bmg250_sensor_data *gyro_data,
+	uint8_t *gyro_length,
+	const struct bmg250_dev *dev)
 {
 	uint8_t frame_header = 0;
 	uint16_t data_index;
@@ -1597,27 +1648,31 @@ static void extract_gyro_header_mode(struct bmg250_sensor_data *gyro_data, uint8
 	for (data_index = dev->fifo->gyro_byte_start_idx; data_index < dev->fifo->length;) {
 		/* extracting Frame header */
 		frame_header = (dev->fifo->data[data_index] & BMG250_FIFO_TAG_INTR_MASK);
+
 		/*Index is moved to next byte where the data is starting*/
 		data_index++;
-
 		switch (frame_header) {
-			/* Gyro frame */
+		/* Gyro frame */
 		case BMG250_FIFO_HEAD_G:
 			unpack_gyro_frame(gyro_data, &data_index, &gyro_index, frame_header, dev);
 			break;
-			/* Sensor time frame */
+
+		/* Sensor time frame */
 		case BMG250_FIFO_HEAD_SENSOR_TIME:
 			unpack_sensortime_frame(&data_index, dev);
 			break;
-			/* Skip frame */
+
+		/* Skip frame */
 		case BMG250_FIFO_HEAD_SKIP_FRAME:
 			unpack_skipped_frame(&data_index, dev);
 			break;
-			/* Input config frame */
+
+		/* Input config frame */
 		case BMG250_FIFO_HEAD_INPUT_CONFIG:
 			move_next_frame(&data_index, 1, dev);
 			break;
 		case BMG250_FIFO_HEAD_OVER_READ:
+
 			/* Update the data index as complete
 			 * in case of over read */
 			data_index = dev->fifo->length;
@@ -1626,8 +1681,10 @@ static void extract_gyro_header_mode(struct bmg250_sensor_data *gyro_data, uint8
 			break;
 		}
 	}
+
 	/*Update number of gyro data read*/
 	*gyro_length = gyro_index;
+
 	/*Update the gyro frame index*/
 	dev->fifo->gyro_byte_start_idx = data_index;
 }
@@ -1650,6 +1707,7 @@ static void unpack_sensortime_frame(uint16_t *data_index, const struct bmg250_de
 		sensor_time_byte3 = dev->fifo->data[(*data_index) + 2] << 16;
 		sensor_time_byte2 = dev->fifo->data[(*data_index) + 1] << 8;
 		sensor_time_byte1 = dev->fifo->data[(*data_index)];
+
 		/* Sensor time */
 		dev->fifo->sensor_time = (uint32_t)(sensor_time_byte3 | sensor_time_byte2 | sensor_time_byte1);
 		*data_index = (*data_index) + BMG250_SENSOR_TIME_LENGTH;
@@ -1668,6 +1726,7 @@ static void unpack_skipped_frame(uint16_t *data_index, const struct bmg250_dev *
 		*data_index = dev->fifo->length;
 	} else {
 		dev->fifo->skipped_frame_count = dev->fifo->data[*data_index];
+
 		/* Move the data index */
 		*data_index = (*data_index) + 1;
 	}
@@ -1708,6 +1767,7 @@ static int8_t enable_gyro_offset(const struct bmg250_dev *dev)
 
 	return rslt;
 }
+
 /*!
  *  @brief This API is used to set the offset values for all the 3 axes of the sensor.
  */
@@ -1736,6 +1796,7 @@ static int8_t set_gyro_offset(const struct bmg250_offset *offset, const struct b
 				offset_msb = offset_msb | (uint8_t)(temp_offset_msb << 2);
 				temp_offset_msb = BMG250_GET_BITS(offset->z_offset, BMG250_GYRO_OFFSET_MSB);
 				offset_msb = offset_msb | (uint8_t)(temp_offset_msb << 4);
+
 				/* Set the offset value in 0x77 register */
 				rslt = bmg250_set_regs(BMG250_OFFSET_EN_ADDR, &offset_msb, 1, dev);
 			}
@@ -1758,6 +1819,7 @@ static int8_t set_spi_enable(const struct bmg250_dev *dev)
 	if (rslt == BMG250_OK) {
 		/* Set the spi_en bit */
 		reg_data = BMG250_SET_BITS_POS_0(reg_data, BMG250_SPI_EN, BMG250_ENABLE);
+
 		/* Enable SPI in the sensor */
 		rslt = bmg250_set_regs(BMG250_NV_CONF_ADDR, &reg_data, 1, dev);
 	}
